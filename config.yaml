@@ -1,0 +1,147 @@
+# Config file for auto generate fabric
+# Config files(.yaml) content base on fabric 2.3.1
+
+# CA servers
+CAServers:
+    # The same CA server can be used to create different config with different admin identity
+    default: &CADefault
+        HostName: orgcahost
+        Port: 11451
+        CAAdminName: admin
+        CAAdminSecret: admin
+        # Specify mspdir, don't need to enroll next time
+        # This value will be automatically add once enroll succeed
+        Enrolled: false
+        MSPDirPath:
+    tlsdefault: &CATLSDefault
+        HostName: tlscahost
+        Port: 11451
+        CAAdminName: admin
+        CAAdminSecret: admin
+        Enrolled: false
+        MSPDirPath:
+
+# Path to config files/ binary files
+Paths:
+    # output path
+    CAOutput: out/ca
+    NodeOutput: out/node
+    TempOutput: out
+
+    # binary files
+    orderer: bin/orderer
+    peer: bin/peer
+    configtxgen: bin/configtxgen
+    fabric-ca-client: bin/fabric-ca-client
+
+    # config files
+    orderer.yaml: config/orderer.yaml
+    core.yaml: config/core.yaml
+    configtx.yaml: config/configtx.yaml
+    config.yaml: config/config.yaml
+
+    # genesis block
+    genesis.block: out/genesis.block
+
+Orgs:
+    SampleOrg:
+        SamplePeer:
+            # default true
+            Enable: false
+            Type: peer
+            CAIdentity:
+                OrgCA:
+                    Server: *CADefault
+                    Name: SamplePeer
+                    Secret: SamplePeer
+                TLSCA:
+                    Server: *CATLSDefault
+                    Name: SamlePeerTLS
+                    Secret: SamlePeerTLS
+            HostName: localhost
+            Path: "~/fabric/peer"
+            # Copy from config file - core.yaml
+            PeerTLSConfig: &SamplePeerTLSConfig
+                enabled: true
+                clientAuthRequired: false
+                cert:
+                    file:
+                key:
+                    file:
+                rootcert:
+                    file:
+                clientRootCAS:
+                    files:
+                clientKey:
+                    file:
+                clientCert:
+                    file:
+            # Other config in core.yaml
+            PeerConfig:
+                peer:
+                    id: SamplePeer
+                    listenAddress: 0.0.0.0:7051
+                    chaincodeListenAddress: 0.0.0.0:7052
+                    chaincodeAddress: 0.0.0.0:7052
+                    address: 0.0.0.0:7051
+                    gossip:
+                        bootstrap: 127.0.0.1:7051
+                        useLeaderElection: false
+                        orgLeader: true
+                    tls:
+                        <<: *SamplePeerTLSConfig
+                    fileSystemPath: /var/hyperledger/production
+                    mspConfigPath: msp
+                    localMspId: SampleOrg
+                ledger:
+                    state:
+                        couchDBConfig:
+                            couchDBAddress: 127.0.0.1:5984
+                    snapshots:
+                        rootDir:
+                operations:
+                    listenAddress: /var/hyperledger/production/snapshots
+        SampleOrderer:
+            Enable: false
+            Type: orderer
+            CAIdentity:
+                OrgCA:
+                    Server: *CADefault
+                    Name: SampleOrderer
+                    Secret: SampleOrderer
+                TLSCA:
+                    Server: *CATLSDefault
+                    Name: SampleOrdererTLS
+                    Secret: SampleOrdererTLS
+            HostName: localhost
+            Path: "~/fabric/orderer"
+            OrdererTLSConfig: &SampleOrdererTLSConfig
+                Enabled: true
+                PrivateKey:
+                Certificate:
+                RootCAs:
+                    - ""
+                ClientAuthRequired: false
+                ClientRootCAs:
+            OrdererConfig:
+                General:
+                    ListenAddress: 127.0.0.1
+                    ListenPort: 7050
+                    TLS:
+                        <<: *SampleOrdererTLSConfig
+                    Cluster:
+                        ClientCertificate:
+                        ClientPrivateKey:
+                    BootstrapMethod: file
+                    BootstrapFile:
+                    LocalMSPDir: msp
+                    LocalMSPID: SampleOrg
+                FileLedger:
+                    Location: /var/hyperledger/production/orderer
+                Operations:
+                    ListenAddress: 127.0.0.1:8443
+                Admin:
+                    ListenAddress: 127.0.0.1:9443
+                Consensus:
+                    WALDir: /var/hyperledger/production/orderer/etcdraft/wal
+                    SnapDir: /var/hyperledger/production/orderer/etcdraft/snapshot
