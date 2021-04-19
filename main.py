@@ -10,6 +10,9 @@ RegisterTemplate = ''
 EnrollmentTemplate = ''
 TLSEnrollmentTemplate = ''
 
+PeerInitScriptTemplate = 'cd %s; tar -zxvf %s; screen -L -dmS %s sh %s/run.sh'
+OrdererInitScriptTemplate = 'cd %s; tar -zxvf %s; screen -L -dmS %s sh %s/run.sh'
+
 DEBUG = False
 def printDebug(s):
     if(DEBUG):
@@ -78,6 +81,7 @@ def enrollAdmin(caserver_profile, callback):
             mspdir_path
         )
     )
+    caserver_profile['Enrolled'] = True
 
 # register identity for one profile
 # accepts an identity in an org
@@ -201,6 +205,7 @@ def enroll(profile, callback):
                     mspdir_path + '/keystore/* ' +
                     mspdir_path + '/keystore/cert.private '
                 )
+            identityprofile['Enrolled'] = True
         except Exception as e:
             raiseWhenDebug(e)
 
@@ -222,11 +227,27 @@ def applyConfig2Template(config, template):
             continue
         if(isinstance(config[k], type(config))):
             applyConfig2Template(config[k], template[k])
-        template[k] = config[k]
+            continue
+        else:
+            template[k] = config[k]
 
-# init a peer with profile
-def initPeer(profile, callback):
-    printDebug('')
+def getGenesisBlock(profile, channel_id, callback):
+    configtxgen = paths['configtxgen']
+    configtx_yaml = paths['configtx.yaml_path']
+
+    output_block = paths['TempOutput'] + '/' + 'genesis.block'
+    callback(
+        configtxgen + ' ' +
+        ' -profile ' + str(profile) +
+        ' -channelID ' + str(channel_id) +
+        ' -configPath ' + configtx_yaml +
+        ' -outputBlock ' + output_block
+    )
+    paths['genesis.block']['LocalBlockPath'] = output_block
+
+    return output_block
+
+def initNode(profile, is_orderer, callback):
     enroll(profile, callback)
     # get path on target machine
     targetpath = profile['Path'].replace(' ','')
@@ -245,12 +266,7 @@ def initPeer(profile, callback):
         'mkdir -p ' +
         folderpath
     )
-    # binary file, mspdir, tlsmspdir
-    callback(
-        'cp -r ' +
-        paths['peer'] + ' ' +
-        folderpath
-    )
+    # copy mspdir, tlsmspdir
     callback(
         'cp -r ' +
         profile['CAIdentity']['OrgCA']['MSPDirPath'] + ' ' +
@@ -267,135 +283,182 @@ def initPeer(profile, callback):
             tlsmspdirpath + ' ' +
             folderpath + '/tlsmsp '
         )
-    # create config file from profile, write to <folder>
-    with open(paths['core.yaml']) as f:
-        config_template = yaml.load(f.read(), Loader=yaml.RoundTripLoader)
-    peerconfig = getOrDefault(profile, 'PeerConfig', None)
-    if(peerconfig != None):
-        applyConfig2Template(peerconfig, config_template)
-    # write to a exist path, then move
-    temp_config_filepath = (
-        paths['TempOutput'] + '/' +
-        str(randint(1, 1000000000000000)) +
-        'core.yaml'
-    )
-    with open(temp_config_filepath, 'w') as f:
-        f.write(yaml.dump(config_template, Dumper=yaml.RoundTripDumper, indent=4))
-    callback(
-        'mv ' +
-        temp_config_filepath + ' ' +
-        folderpath + '/core.yaml'
-    )
-
-    # compress and clean
-    callback(
-        'tar -zcvf ' +
-        folder + '.tar.gz ' +
-        folderpath
-    )
-    callback(
-        'rm -r ' +
-        folderpath
-    )
-
-# init a orderer with profile
-def initOrderer(profile, callback):
-    enroll(profile, callback)
-    # get path on target machine
-    targetpath = profile['Path'].replace(' ','')
-    if(targetpath[-1] == '/'):
-        targetpath = targetpath[:-1]
-    # get folder name and create path to the folder on current machine
-    folder = targetpath.split('/')[-1]
-    folderpath = paths['NodeOutput'] + '/' + folder
-
-    # make the folder, clean before make
-    callback(
-        'rm -r ' +
-        folderpath
-    )
-    callback(
-        'mkdir -p ' +
-        folderpath
-    )
-    # binary file, mspdir, tlsmspdir
-    callback(
-        'cp -r ' +
-        paths['orderer'] + ' ' +
-        folderpath
-    )
-    callback(
-        'cp -r ' +
-        profile['CAIdentity']['OrgCA']['MSPDirPath'] + ' ' +
-        folderpath + '/msp '
-    )
-    tlsmspdirpath = getOrDefault(
-        getOrDefault(profile['CAIdentity'], 'TLSCA', None),
-        'MSPDirPath',
-        None
-    )
-    if(tlsmspdirpath != None):
+    # copy binary file and create config file from profile
+    if(is_orderer):
         callback(
             'cp -r ' +
-            tlsmspdirpath + ' ' +
-            folderpath + '/tlsmsp '
+            paths['orderer'] + ' ' +
+            folderpath
         )
-    # create config file from profile, write to <folder>
-    with open(paths['orderer.yaml']) as f:
-        config_template = yaml.load(f.read(), Loader=yaml.RoundTripLoader)
-    ordererconfig = getOrDefault(profile, 'OrdererConfig', None)
-    if(ordererconfig != None):
-        applyConfig2Template(ordererconfig, config_template)
-    # write to a exist path, then move
-    temp_config_filepath = (
-        paths['TempOutput'] + '/' +
-        str(randint(1, 1000000000000000)) +
-        'orderer.yaml'
-    )
-    with open(temp_config_filepath, 'w') as f:
-        f.write(yaml.dump(config_template, Dumper=yaml.RoundTripDumper, indent=4))
-    callback(
-        'mv ' +
-        temp_config_filepath + ' ' +
-        folderpath + '/orderer.yaml'
-    )
-    # copy genesis block
-    genesis_block_filename = getOrDefault(
-        getOrDefault(
-            config_template,
-            'General',
-            None
-        ),
-        'BootstrapFile',
-        None
-    )
-
-    if(genesis_block_filename == None):
-        genesis_block_filename = 'genesis.block'
-        general_config = getOrDefault(
-            config_template,
-            'General',
+        # set tls config
+        tlsconfig = getOrDefault(profile, 'OrdererTLSConfig', None)
+        if(tlsconfig != None):
+            if(tlsconfig['Enabled'] == True and tlsmspdirpath != None):
+                tlsconfig['PrivateKey'] = 'tlsmsp/keystore/cert.private'
+                tlsconfig['Certificate'] = 'tlsmsp/signcerts/cert.pem'
+                tlsconfig['RootCAs'] = ['tlsmsp/tlscacerts/tlscacert.pem']
+        with open(paths['orderer.yaml']) as f:
+            config_template = yaml.load(f.read(), Loader=yaml.RoundTripLoader)
+        ordererconfig = getOrDefault(profile, 'OrdererConfig', None)
+        if(ordererconfig != None):
+            applyConfig2Template(ordererconfig, config_template)
+        # copy genesis block
+        # genesis block filename in orderer config
+        genesis_block_filename = getOrDefault(
+            getOrDefault(
+                config_template,
+                'General',
+                None
+            ),
+            'BootstrapFile',
             None
         )
-        if(general_config == None):
-            config_template['General'] = {}
-            general_config = config_template['General']
-        general_config['BootstrapFile'] = genesis_block_filename
-    callback(
-        'cp ' +
-        paths['genesis.block'] + ' ' +
-        folderpath + '/' +
-        genesis_block_filename
-    )
+        if(genesis_block_filename == None):
+            genesis_block_filename = 'genesis.block'
+            general_config = getOrDefault(
+                config_template,
+                'General',
+                None
+            )
+            if(general_config == None):
+                config_template['General'] = {}
+                general_config = config_template['General']
+            general_config['BootstrapFile'] = genesis_block_filename
+        # local origin genesis block file path
+        genesis_block_profile = paths['genesis.block']
+        genesis_block_local_filepath = getOrDefault(genesis_block_profile, 'LocalBlockPath', None)
+        if(genesis_block_local_filepath == None or genesis_block_local_filepath == ''):
+            genesis_block_local_filepath = getGenesisBlock(
+                genesis_block_profile['Profile'],
+                genesis_block_profile['ChannelID'],
+                callback
+            )
+        callback(
+            'cp ' +
+            genesis_block_local_filepath + ' ' +
+            folderpath + '/' +
+            genesis_block_filename
+        )
+        # copy run.sh script
+        callback(
+            'cp ' +
+            paths['orderer_run.sh'] + ' ' +
+            folderpath + '/run.sh'
+        )
+        # write to a exist path, then move
+        temp_config_filepath = (
+            paths['TempOutput'] + '/' +
+            str(randint(1, 1000000000000000)) +
+            'orderer.yaml'
+        )
+        with open(temp_config_filepath, 'w') as f:
+            f.write(yaml.dump(config_template, Dumper=yaml.RoundTripDumper, indent=4))
+        callback(
+            'mv ' +
+            temp_config_filepath + ' ' +
+            folderpath + '/orderer.yaml'
+        )
+    else:
+        callback(
+            'cp -r ' +
+            paths['peer'] + ' ' +
+            folderpath
+        )
+        # set tls config
+        tlsconfig = getOrDefault(profile, 'PeerTLSConfig', None)
+        if(tlsconfig != None):
+            if(tlsconfig['enabled'] == True and tlsmspdirpath != None):
+                peer_tls_cert = getOrDefault(tlsconfig, 'cert', None)
+                if(peer_tls_cert == None):
+                    peer_tls_cert = {}
+                    tlsconfig['cert'] = peer_tls_cert
+                peer_tls_cert['file'] = 'tlsmsp/signcerts/cert.pem'
+                peer_tls_key = getOrDefault(tlsconfig, 'key', None)
+                if(peer_tls_key == None):
+                    peer_tls_key = {}
+                    tlsconfig['key'] = peer_tls_key
+                peer_tls_key['file'] = 'tlsmsp/keystore/cert.private'
+                peer_tls_rootcert = getOrDefault(tlsconfig, 'rootcert', None)
+                if(peer_tls_rootcert == None):
+                    peer_tls_rootcert = {}
+                    tlsconfig['rootcert'] = peer_tls_rootcert
+                peer_tls_rootcert['file'] = 'tlsmsp/tlscacerts/tlscacert.pem'
+        with open(paths['core.yaml']) as f:
+            config_template = yaml.load(f.read(), Loader=yaml.RoundTripLoader)
+        peerconfig = getOrDefault(profile, 'PeerConfig', None)
+        if(peerconfig != None):
+            applyConfig2Template(peerconfig, config_template)
+        # write to a exist path, then move
+        temp_config_filepath = (
+            paths['TempOutput'] + '/' +
+            str(randint(1, 1000000000000000)) +
+            'core.yaml'
+        )
+        with open(temp_config_filepath, 'w') as f:
+            f.write(yaml.dump(config_template, Dumper=yaml.RoundTripDumper, indent=4))
+        callback(
+            'mv ' +
+            temp_config_filepath + ' ' +
+            folderpath + '/core.yaml'
+        )
+        # copy run.sh script
+        callback(
+            'cp ' +
+            paths['peer_run.sh'] + ' ' +
+            folderpath + '/run.sh'
+        )
     # compress and clean
+    tar_name = folder + '.tar.gz'
+    tar_path = paths['NodeOutput'] + '/' + tar_name
     callback(
         'tar -zcvf ' +
-        folder + '.tar.gz ' +
-        folderpath
+        tar_path + ' ' +
+        ' -C ' +
+        folderpath +
+        ' . '
     )
     callback(
         'rm -r ' +
         folderpath
+    )
+    # copy to target server, generate autorun script, start the script
+    callback(
+        'ssh -n ' +
+        profile['HostName'] +
+        ' mkdir -p %s '  % (profile['Path'])
+    )
+    callback(
+        'scp ' +
+        tar_path + ' ' +
+        profile['HostName'] + ':' +
+        profile['Path'] + '/' +
+        tar_name 
+    )
+    if(is_orderer):
+        callback(
+            'ssh -n ' +
+            profile['HostName'] + ' ' +
+            OrdererInitScriptTemplate % (
+                profile['Path'],
+                tar_name,
+                profile['Path'].replace('/', '-'),
+                profile['Path']
+            )
+        )
+    else:
+        callback(
+            'ssh -n ' +
+            profile['HostName'] + ' ' +
+            PeerInitScriptTemplate % (
+                profile['Path'],
+                tar_name,
+                profile['Path'].replace('/', '-'),
+                profile['Path']
+            )
+        )
+    # clean
+    callback(
+        'rm ' + tar_path
     )
 
 # traverse each profile in config file
@@ -434,9 +497,9 @@ def traverse(config, args, callback):
             elif(command == commands['initnode']):
                 printDebug('initialize node %s' % identity)
                 if(profile['Type'] == 'peer'):
-                    initPeer(profile, callback)
+                    initNode(profile, False, callback)
                 elif(profile['Type'] == 'orderer'):
-                    initOrderer(profile, callback)
+                    initNode(profile, True, callback)
                 # once init as a node finished, mark to disabled
                 profile['Enable'] = False
             elif(command == commands['reset']):
@@ -529,7 +592,7 @@ def main():
         ' enroll ' +
         ' -u http://%s:%s@%s:%s' +
         ' --mspdir %s ' +
-        ' --csr.hosts \'%s,%s\' ' +
+        ' --csr.hosts %s,%s ' +
         ' --enrollment.profile tls' +
         ' --home ./ '
     )

@@ -28,20 +28,25 @@ Paths:
     NodeOutput: out/node
     TempOutput: out
 
-    # binary files
+    # executable files
     orderer: bin/orderer
     peer: bin/peer
     configtxgen: bin/configtxgen
     fabric-ca-client: bin/fabric-ca-client
+    peer_run.sh: bin/peer_run.sh
+    orderer_run.sh: bin/orderer_run.sh
 
     # config files
     orderer.yaml: config/orderer.yaml
     core.yaml: config/core.yaml
-    configtx.yaml: config/configtx.yaml
+    configtx.yaml_path: config
     config.yaml: config/config.yaml
 
     # genesis block
-    genesis.block: out/genesis.block
+    genesis.block:
+        Profile: SysChannelEtcdRaft
+        ChannelID: syschanneletcdraft
+        LocalBlockPath:
 
 Orgs:
     SampleOrg:
@@ -88,8 +93,7 @@ Orgs:
                         bootstrap: 127.0.0.1:7051
                         useLeaderElection: false
                         orgLeader: true
-                    tls:
-                        <<: *SamplePeerTLSConfig
+                    tls: *SamplePeerTLSConfig
                     fileSystemPath: /var/hyperledger/production
                     mspConfigPath: msp
                     localMspId: SampleOrg
@@ -127,8 +131,7 @@ Orgs:
                 General:
                     ListenAddress: 127.0.0.1
                     ListenPort: 7050
-                    TLS:
-                        <<: *SampleOrdererTLSConfig
+                    TLS: *SampleOrdererTLSConfig
                     Cluster:
                         ClientCertificate:
                         ClientPrivateKey:
